@@ -65,6 +65,21 @@ uvicorn trip_planner.main:app --reload --host 0.0.0.0 --port 8000
 
 ---
 
+## 🐳 Docker 一键启动
+
+```bash
+# 1) 准备环境变量
+cp .env.example .env
+# 然后编辑 .env，至少填：AMAP_API_KEY、以及你实际使用的 LLM KEY/URL
+
+# 2) 启动
+docker compose up --build
+
+# 3) 访问
+# 首页（前后端同容器同域） http://127.0.0.1:8000/
+# API 文档            http://127.0.0.1:8000/docs
+```
+
 ## 📋 项目结构
 ```
 ai-trip-planner/
