@@ -59,7 +59,7 @@ cp .env.example .env
 uvicorn trip_planner.main:app --reload --host 0.0.0.0 --port 8000
 
 # 5. 访问
-# 前端 http://127.0.0.1:5500（Live Server 或双击 index.html）
+# 前后端同容器同域 http://127.0.0.1:8000/
 # API 文档 http://127.0.0.1:8000/docs
 ```
 
@@ -128,12 +128,11 @@ ai-trip-planner/
     - 高德地图 Key 申请地址：https://lbs.amap.com/api/webservice/guide/api/key
     - 通义千问 API：https://help.aliyun.com/zh/dashscope/
 
-- 启动后端
-  python main.py 或使用 uvicorn main:app --reload --host 127.0.0.1 --port 8000
+- 启动后端（前端会同时在 8000 端口提供服务）
+  uvicorn trip_planner.main:app --reload --host 127.0.0.1 --port 8000
 
-- 打开前端
-  - 可以下载vscode插件Live Server
-  - 或者直接在浏览器打开 index.html 文件，访问http://127.0.0.1:5500
+- 访问前端
+  - API 文档 http://127.0.0.1:8000/docs
 
 ---
 
@@ -170,7 +169,7 @@ curl -X POST http://localhost:8000/plan \
 ## 🙏 致谢
 - 高德地图 MCP Server 提供稳定工具集  
 - DeepSeek 开源模型降低幻觉率  
-- LangChain 官方 1.2 文档 & 社区
+- LangChain 官方文档 & 社区
 
 ---
 
