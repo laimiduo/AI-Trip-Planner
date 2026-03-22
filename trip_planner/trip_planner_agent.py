@@ -95,35 +95,41 @@ class MultiAgentTripPlanner:
             print(f"偏好: {', '.join(request.preferences) if request.preferences else '无'}")
             print(f"{'='*60}\n")
 
-            print("📍 步骤1: 搜索景点...")
-            attraction_query = self._build_attraction_query(request)
-            attraction_response =await self.attraction_agent.ainvoke(attraction_query)
-            attraction_text = self._extract_text(attraction_response)
-            print(f"景点搜索结果: {attraction_text[:200]}...\n")
+            # 步骤1-3：并行执行景点、天气、酒店查询
+            print("🔄 步骤1: 并行搜索景点、查询天气、搜索酒店...")
 
-            await asyncio.sleep(1)
+            async def get_attractions():
+                query = self._build_attraction_query(request)
+                response = await self.attraction_agent.ainvoke(query)
+                return self._extract_text(response)
 
-            print("🌤️  步骤2: 查询天气...")
-            weather_query = {
-                "messages": [("user", f"请查询{request.city}从{request.start_date}到{request.end_date}的天气预报，包括每天白天/夜间温度和天气状况。")]
+            async def get_weather():
+                query = {
+                    "messages": [("user", f"请查询{request.city}从{request.start_date}到{request.end_date}的天气预报，包括每天白天/夜间温度和天气状况。")]
                 }
-            weather_response = await self.weather_agent.ainvoke(weather_query)
-            weather_text = self._extract_text(weather_response)
-            print(f"天气查询结果: {weather_text[:200]}...\n")
+                response = await self.weather_agent.ainvoke(query)
+                return self._extract_text(response)
 
-            await asyncio.sleep(1)
-
-            print("🏨 步骤3: 搜索酒店...")
-            hotel_query = {
-                "messages": [("user", f"请在{request.city}搜索{request.accommodation}，推荐6-10家位置方便、价格适中的酒店，包括名称、地址、大致价格、评分等信息。")]
+            async def get_hotels():
+                query = {
+                    "messages": [("user", f"请在{request.city}搜索{request.accommodation}，推荐6-10家位置方便、价格适中的酒店，包括名称、地址、大致价格、评分等信息。")]
                 }
-            hotel_response = await self.hotel_agent.ainvoke(hotel_query)
-            hotel_text = self._extract_text(hotel_response)
-            print(f"酒店搜索结果: {hotel_text[:200]}...\n")
+                response = await self.hotel_agent.ainvoke(query)
+                return self._extract_text(response)
 
-            await asyncio.sleep(1)
+            # 并行执行三个任务
+            attraction_text, weather_text, hotel_text = await asyncio.gather(
+                get_attractions(),
+                get_weather(),
+                get_hotels()
+            )
 
-            print("📋 步骤4: 生成行程计划...")
+            print(f"✅ 景点搜索完成: {attraction_text[:100]}...")
+            print(f"✅ 天气查询完成: {weather_text[:100]}...")
+            print(f"✅ 酒店搜索完成: {hotel_text[:100]}...\n")
+
+            # 步骤4：生成行程计划（依赖前三步结果）
+            print("📋 步骤2: 生成行程计划...")
             planner_query = self._build_planner_query(request, attraction_text, weather_text, hotel_text)
             planner_input = {"messages": [("user", planner_query)]}
             planner_response = await self.planner_agent.ainvoke(planner_input)

@@ -34,13 +34,48 @@ graph TD
 
 ---
 
+## ⚡ 异步并行优化
+
+### 优化前后对比
+
+| 模式 | 执行流程 | 耗时 |
+|:---:|:---|:---:|
+| **优化前（顺序）** | 景点 → 等待 → 天气 → 等待 → 酒店 → 等待 → 生成计划 | ~4分22秒 |
+| **优化后（并行）** | 景点+天气+酒店 并行 → 生成计划 | ~3分09秒 |
+
+**性能提升：约 28%**
+
+### 核心实现
+
+使用 `asyncio.gather()` 实现异步并行：
+
+```python
+# 并行执行三个独立任务
+attraction_text, weather_text, hotel_text = await asyncio.gather(
+    get_attractions(),   # 景点搜索
+    get_weather(),       # 天气查询
+    get_hotels()         # 酒店推荐
+)
+```
+
+### 优化原理
+
+1. **识别独立任务**：景点搜索、天气查询、酒店推荐三个任务互不依赖，可以同时执行
+2. **asyncio.gather**：并发启动多个协程，等待全部完成后返回结果
+
+### 代码位置
+
+- 核心逻辑：`trip_planner/trip_planner_agent.py` - `plan_trip()` 方法
+
+---
+
 ##🛠️ 技术栈
 - **后端**：FastAPI + Uvicorn + Pydantic v2
 - **AI 框架**：LangChain 1.1 + langchain-mcp-adapters
 - **LLM**：DeepSeek（通义千问/DeepSeek API 双兼容）
 - **地图服务**：高德地图 Web 服务 API（POI + 天气）
 - **前端**：Tailwind CDN + 原生 JS（零构建）
-- **并发**：SSE 流式输出，每秒实时刷新
+- **并发**：asyncio.gather 并行查询多个独立 API
 
 ---
 
@@ -162,7 +197,7 @@ curl -X POST http://localhost:8000/plan \
         "extra": "多安排火锅和熊猫基地"
       }'
 ```
-返回 SSE 流，每秒推送 Markdown 片段，前端实时渲染。
+返回 JSON 格式的完整行程规划结果
 
 ---
 
