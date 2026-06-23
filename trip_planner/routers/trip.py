@@ -7,14 +7,18 @@ import uuid
 from typing import Optional
 
 from arq import create_pool
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
-from schemas import TripPlanResponse, TripRequest
+from schemas import TripPlan, TripPlanResponse, TripRequest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 from sse_starlette.sse import EventSourceResponse
 from trip_planner_agent import get_trip_planner_agent
 
 from trip_planner.cache import cache_key, make_cache_backend
 from trip_planner.config import get_settings
+from trip_planner.dependencies import get_db_session
+from trip_planner.models import TravelPlan
 
 router = APIRouter(prefix="/api/v1/trip", tags=["trip"])
 planner = get_trip_planner_agent()
@@ -54,6 +58,17 @@ async def plan_trip_stream(request: TripRequest):
     async def event_generator():
         start = time.monotonic()
         try:
+            # 检查 LLM 缓存
+            cache_key_str = planner._request_cache_key(request)
+            cached = await planner.cache.get(cache_key_str)
+            if cached is not None:
+                msg = "Redis 缓存命中，直接返回..."
+                yield {"event": "progress", "data": json.dumps({"step": 4, "total": 4, "message": msg})}
+                data = planner._fill_defaults(json.loads(cached), request)
+                plan = TripPlan(**data)
+                yield {"event": "result", "data": plan.model_dump_json()}
+                return
+
             yield {"event": "progress", "data": json.dumps({"step": 1, "total": 4, "message": "正在查询天气信息..."})}
             weather_task = planner._collect_weather(request)
             yield {"event": "progress", "data": json.dumps({"step": 2, "total": 4, "message": "正在搜索景点..."})}
@@ -63,6 +78,12 @@ async def plan_trip_stream(request: TripRequest):
             weather_data, attraction_data, hotel_data = await asyncio.gather(weather_task, attraction_task, hotel_task)
             yield {"event": "progress", "data": json.dumps({"step": 4, "total": 4, "message": "正在生成行程计划..."})}
             plan = await planner._generate_plan(request, weather_data, attraction_data, hotel_data)
+            # 写入 LLM 缓存 (1h TTL)
+            try:
+                plan_json = plan.model_dump_json()
+                await planner.cache.set(cache_key_str, plan_json, 3600)
+            except Exception:
+                pass
             duration_ms = int((time.monotonic() - start) * 1000)
             _try_persist(request, plan, duration_ms)
             yield {"event": "result", "data": plan.model_dump_json()}
@@ -214,3 +235,98 @@ async def _save_record(session, record):
     async with session:
         session.add(record)
         await session.commit()
+
+
+# ─── 历史记录 ────────────────────────────────────────────────
+
+
+class PlanListItem(BaseModel):
+    """历史列表条目 (摘要)."""
+    id: str
+    city: str
+    start_date: str
+    end_date: str
+    travel_days: int
+    created_at: str
+    budget_total: int = 0
+    traveler_count: int = 1
+
+
+class PlanDetail(BaseModel):
+    """单个计划详情."""
+    id: str
+    city: str
+    start_date: str
+    end_date: str
+    travel_days: int
+    created_at: str
+    plan: Optional[TripPlan] = None
+
+
+@router.get("/plans")
+async def list_plans(db: AsyncSession = Depends(get_db_session)):
+    """获取所有旅行计划列表 (按创建时间倒序)."""
+    result = await db.execute(
+        select(TravelPlan).order_by(TravelPlan.created_at.desc())
+    )
+    records = result.scalars().all()
+    items = []
+    for r in records:
+        total = 0
+        if r.plan_json and isinstance(r.plan_json, dict):
+            budget = r.plan_json.get("budget") or {}
+            total = budget.get("total", 0)
+        items.append(PlanListItem(
+            id=str(r.id),
+            city=r.city,
+            start_date=r.start_date,
+            end_date=r.end_date,
+            travel_days=r.travel_days,
+            created_at=r.created_at.isoformat(),
+            budget_total=total,
+            traveler_count=r.traveler_count or 1,
+        ))
+    return {"success": True, "plans": items}
+
+
+@router.get("/plans/{plan_id}")
+async def get_plan(plan_id: str, db: AsyncSession = Depends(get_db_session)):
+    """获取单个旅行计划详情."""
+    try:
+        uid = uuid.UUID(plan_id)
+    except ValueError:
+        raise HTTPException(400, "无效的 ID 格式")
+
+    result = await db.execute(select(TravelPlan).where(TravelPlan.id == uid))
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(404, "计划不存在")
+
+    plan = TripPlan(**record.plan_json) if record.plan_json else None
+    return PlanDetail(
+        id=str(record.id),
+        city=record.city,
+        start_date=record.start_date,
+        end_date=record.end_date,
+        travel_days=record.travel_days,
+        created_at=record.created_at.isoformat(),
+        plan=plan,
+    )
+
+
+@router.delete("/plans/{plan_id}")
+async def delete_plan(plan_id: str, db: AsyncSession = Depends(get_db_session)):
+    """删除旅行计划 (级联删除关联反馈)."""
+    try:
+        uid = uuid.UUID(plan_id)
+    except ValueError:
+        raise HTTPException(400, "无效的 ID 格式")
+
+    result = await db.execute(select(TravelPlan).where(TravelPlan.id == uid))
+    record = result.scalar_one_or_none()
+    if not record:
+        raise HTTPException(404, "计划不存在")
+
+    await db.delete(record)
+    await db.commit()
+    return {"success": True, "message": "已删除"}
