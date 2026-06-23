@@ -74,17 +74,31 @@ class MultiAgentTripPlanner:
         raw = json.dumps(request.model_dump() if hasattr(request, "model_dump") else request.__dict__, sort_keys=True)
         return cache_key("llm:plan", md5(raw.encode()).hexdigest())
 
+    @staticmethod
+    def _trim_weather(casts: list[dict]) -> list[dict]:
+        """只保留核心天气字段."""
+        kept = []
+        for c in casts:
+            kept.append({
+                "date": c.get("date", ""),
+                "day_weather": c.get("day_weather", ""),
+                "night_weather": c.get("night_weather", ""),
+                "day_temp": c.get("day_temp", ""),
+                "night_temp": c.get("night_temp", ""),
+            })
+        return kept
+
     async def _collect_weather(self, request: TripRequest) -> list[dict]:
         """从高德直接获取天气预报."""
         try:
             forecast = await self.amap.get_weather(request.city)
-            return forecast.get("casts", [])
+            return self._trim_weather(forecast.get("casts", []))
         except Exception as e:
             print(f"  天气查询失败: {e}")
             return []
 
     @staticmethod
-    def _trim_poi(pois: list[dict], max_count: int = 6) -> list[dict]:
+    def _trim_poi(pois: list[dict], max_count: int = 5) -> list[dict]:
         """只保留 POI 的核心字段，减少传给 LLM 的 token 量."""
         kept = []
         for p in pois[:max_count]:
@@ -92,7 +106,6 @@ class MultiAgentTripPlanner:
                 "name": p.get("name", ""),
                 "address": p.get("address", ""),
                 "type": p.get("type", ""),
-                "location": p.get("location", ""),
                 "rating": p.get("biz_ext", {}).get("rating", "") if isinstance(p.get("biz_ext"), dict) else "",
             })
         return kept
@@ -102,7 +115,7 @@ class MultiAgentTripPlanner:
         try:
             keywords = ", ".join(request.preferences) if request.preferences else "旅游景点"
             pois = await self.amap.search_poi(keywords, request.city, types="旅游景点")
-            return self._trim_poi(pois, 6)
+            return self._trim_poi(pois, 5)
         except Exception as e:
             print(f"  景点搜索失败: {e}")
             return []
@@ -111,7 +124,7 @@ class MultiAgentTripPlanner:
         """从高德 POI 搜索获取酒店."""
         try:
             pois = await self.amap.search_poi(f"{request.accommodation} 酒店", request.city, types="住宿服务")
-            return self._trim_poi(pois, 4)
+            return self._trim_poi(pois, 3)
         except Exception as e:
             print(f"  酒店搜索失败: {e}")
             return []
