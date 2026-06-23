@@ -21,8 +21,8 @@ class MultiAgentTripPlanner:
 
     def __init__(self):
         self.llm = llm
-        self.amap = AmapClient()
         self.cache = make_cache_backend(get_settings().REDIS_URL, get_settings().ENABLE_CACHE)
+        self.amap = AmapClient(cache=self.cache)
 
     async def initialize(self):
         """无需 MCP 初始化，保留以兼容旧调用方."""
