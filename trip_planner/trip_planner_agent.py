@@ -129,7 +129,10 @@ class MultiAgentTripPlanner:
 
         budget_text = ""
         if request.budget_min or request.budget_max:
-            budget_text = f"预算范围: {request.budget_min or '不限'} - {request.budget_max or '不限'} 元"
+            budget_text = (
+                f"**💰 预算约束(必须遵守):** {request.budget_min or '不限'} ~ {request.budget_max or '不限'} 元\n"
+                f"总花费(budget.total)不得超出此范围！请据此控制景点门票、酒店、餐饮、交通各项花费。"
+            )
 
         extra_text = ""
         if request.free_text_input:
