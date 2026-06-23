@@ -1,7 +1,8 @@
 """高德地图 Web Service API 直连客户端 — 可选缓存层."""
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
@@ -9,6 +10,7 @@ from hashlib import md5
 from typing import Optional
 
 import httpx
+
 from env_utils import AMAP_API_KEY
 from trip_planner.cache import CacheBackend, NullCache, cache_key
 

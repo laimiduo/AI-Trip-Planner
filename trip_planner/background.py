@@ -3,9 +3,8 @@
 import json
 import time
 import uuid
-from typing import Optional
 
-from trip_planner.cache import make_cache_backend, cache_key
+from trip_planner.cache import cache_key, make_cache_backend
 from trip_planner.config import get_settings
 
 

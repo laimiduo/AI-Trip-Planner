@@ -6,7 +6,7 @@ from typing import AsyncGenerator
 from fastapi import Request
 
 from trip_planner.cache import CacheBackend, NullCache, make_cache_backend
-from trip_planner.config import Settings, get_settings
+from trip_planner.config import Settings
 
 
 @lru_cache

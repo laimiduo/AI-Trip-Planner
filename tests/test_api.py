@@ -44,6 +44,5 @@ class TestStreamEndpoint:
     @pytest.mark.timeout(5)
     async def test_stream_sse(self, client, sample_request):
         """SSE 端点应返回 text/event-stream (外部 API 可能超时)."""
-        import pytest
         resp = await client.post("/api/v1/trip/plan/stream", json=sample_request)
         assert resp.status_code == 200

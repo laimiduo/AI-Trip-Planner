@@ -1,16 +1,19 @@
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import asyncio
 import json
 from hashlib import md5
-from schemas import TripRequest, TripPlan
-from my_llm import llm
+
 from amap_client import AmapClient
 from prompts import PLANNER_SYSTEM_PROMPT
-from trip_planner.cache import NullCache, make_cache_backend, cache_key
+from schemas import TripPlan, TripRequest
+
+from my_llm import llm
+from trip_planner.cache import cache_key, make_cache_backend
 from trip_planner.config import get_settings
-import asyncio
 
 
 class MultiAgentTripPlanner:
@@ -37,7 +40,7 @@ class MultiAgentTripPlanner:
             return TripPlan(**self._fill_defaults(data, request))
 
         print(f"\n{'='*60}")
-        print(f"🚀 开始规划旅行...")
+        print("🚀 开始规划旅行...")
         print(f"目的地: {request.city} | {request.start_date} ~ {request.end_date} ({request.travel_days}天)")
         print(f"{'='*60}\n")
 
@@ -63,7 +66,7 @@ class MultiAgentTripPlanner:
         except Exception:
             pass
 
-        print(f"✅ 旅行计划生成完成!\n")
+        print("✅ 旅行计划生成完成!\n")
         return plan
 
     def _request_cache_key(self, request: TripRequest) -> str:
@@ -115,9 +118,11 @@ class MultiAgentTripPlanner:
 
     def _build_user_message(self, request: TripRequest, weather_data, attraction_data, hotel_data) -> str:
         """构建 LLM 用户消息."""
-        attractions_text = json.dumps(attraction_data, ensure_ascii=False, indent=2) if attraction_data else "暂无景点数据"
-        weather_text = json.dumps(weather_data, ensure_ascii=False, indent=2) if weather_data else "暂无天气数据"
-        hotels_text = json.dumps(hotel_data, ensure_ascii=False, indent=2) if hotel_data else "暂无酒店数据"
+        def _dump(x):
+            return json.dumps(x, ensure_ascii=False, indent=2)
+        attractions_text = _dump(attraction_data) if attraction_data else "暂无景点数据"
+        weather_text = _dump(weather_data) if weather_data else "暂无天气数据"
+        hotels_text = _dump(hotel_data) if hotel_data else "暂无酒店数据"
 
         preferences = ", ".join(request.preferences) if request.preferences else "无"
         cuisine = ", ".join(request.cuisine_preferences) if request.cuisine_preferences else "无特殊偏好"
@@ -235,8 +240,10 @@ class MultiAgentTripPlanner:
             valid_days.append(day)
         data["days"] = valid_days
         # 自动计算人均预算
-        if data.get("budget_per_person") is None and isinstance(data.get("budget"), dict) and data["budget"].get("total") and request.traveler_count:
-            data["budget_per_person"] = data["budget"]["total"] // request.traveler_count
+        bp = data.get("budget_per_person")
+        bd = data.get("budget")
+        if bp is None and isinstance(bd, dict) and bd.get("total") and request.traveler_count:
+            data["budget_per_person"] = bd["total"] // request.traveler_count
         return data
 
     def _parse_json_to_trip_plan(self, text: str, request: TripRequest) -> TripPlan:

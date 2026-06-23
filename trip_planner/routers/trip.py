@@ -6,16 +6,15 @@ import time
 import uuid
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel
-from sse_starlette.sse import EventSourceResponse
 from arq import create_pool
-
-from schemas import TripRequest, TripPlanResponse
+from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
+from schemas import TripPlanResponse, TripRequest
+from sse_starlette.sse import EventSourceResponse
 from trip_planner_agent import get_trip_planner_agent
-from trip_planner.cache import make_cache_backend, NullCache, cache_key
+
+from trip_planner.cache import cache_key, make_cache_backend
 from trip_planner.config import get_settings
-from trip_planner.background import BACKGROUND_TASKS
 
 router = APIRouter(prefix="/api/v1/trip", tags=["trip"])
 planner = get_trip_planner_agent()
@@ -148,8 +147,10 @@ async def stream_task_progress(task_id: str):
             if pubsub:
                 async for message in pubsub.listen():
                     if message["type"] == "message":
-                        channel = message["channel"].decode() if isinstance(message["channel"], bytes) else message["channel"]
-                        data = message["data"].decode() if isinstance(message["data"], bytes) else message["data"]
+                        ch = message["channel"]
+                        channel = ch.decode() if isinstance(ch, bytes) else ch
+                        d = message["data"]
+                        data = d.decode() if isinstance(d, bytes) else d
                         if "result" in channel:
                             yield {"event": "result", "data": data}
                             return
@@ -171,9 +172,10 @@ async def stream_task_progress(task_id: str):
 def _try_persist(request: TripRequest, plan, duration_ms: int) -> None:
     """后台尝试保存到数据库 (异步 fire-and-forget)."""
     try:
-        from trip_planner.database import is_db_ready, _async_session_maker
-        from trip_planner.models import TravelPlan
         import asyncio
+
+        from trip_planner.database import _async_session_maker, is_db_ready
+        from trip_planner.models import TravelPlan
         if not is_db_ready():
             return
 

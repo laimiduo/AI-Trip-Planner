@@ -1,9 +1,8 @@
 """Prometheus 指标 — 使用 prometheus_client 直连, 避免 starlette 版本冲突."""
 
 import time
-from functools import wraps
 
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response

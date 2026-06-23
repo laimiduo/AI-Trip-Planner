@@ -9,15 +9,16 @@ _parent_dir = os.path.dirname(_pkg_dir)
 if _parent_dir not in sys.path:
     sys.path.insert(0, _parent_dir)
 
-import uvicorn
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager  # noqa: E402
 
-from trip_planner.cache import make_cache_backend, NullCache
-from trip_planner.config import get_settings
-from trip_planner.metrics import PrometheusMiddleware, metrics_endpoint
+import uvicorn  # noqa: E402
+from fastapi import FastAPI  # noqa: E402
+from fastapi.middleware.cors import CORSMiddleware  # noqa: E402
+from fastapi.responses import FileResponse  # noqa: E402
+
+from trip_planner.cache import NullCache, make_cache_backend  # noqa: E402
+from trip_planner.config import get_settings  # noqa: E402
+from trip_planner.metrics import PrometheusMiddleware, metrics_endpoint  # noqa: E402
 
 
 @asynccontextmanager
@@ -31,7 +32,7 @@ async def lifespan(app: FastAPI):
 
     if settings.DATABASE_URL and settings.ENABLE_DB:
         try:
-            from trip_planner.database import init_db, create_tables
+            from trip_planner.database import create_tables, init_db
             await init_db(settings.DATABASE_URL)
             await create_tables()
             print("  数据库: 已连接")
@@ -62,8 +63,9 @@ app.add_route("/metrics", metrics_endpoint, include_in_schema=False)
 print("  Prometheus: /metrics 已注册")
 
 # --- 路由 ---
-from routers.trip import router as trip_router
-from routers.feedback import router as feedback_router
+from routers.feedback import router as feedback_router  # noqa: E402
+from routers.trip import router as trip_router  # noqa: E402
+
 app.include_router(trip_router)
 app.include_router(feedback_router)
 

@@ -3,30 +3,39 @@
 import pytest
 from pydantic import ValidationError
 from schemas import (
-    TripRequest,
-    TripPlan,
-    DayPlan,
     Attraction,
-    Meal,
-    Location,
-    TripPlanResponse,
-    WeatherInfo,
     Budget,
+    DayPlan,
+    Location,
+    Meal,
+    TripPlan,
+    TripPlanResponse,
+    TripRequest,
+    WeatherInfo,
 )
 
 
 class TestTripRequest:
     def test_valid_request(self):
-        r = TripRequest(city="北京", start_date="2025-06-01", end_date="2025-06-03", travel_days=3, transportation="公交", accommodation="酒店")
+        r = TripRequest(
+            city="北京", start_date="2025-06-01", end_date="2025-06-03",
+            travel_days=3, transportation="公交", accommodation="酒店",
+        )
         assert r.city == "北京"
         assert r.travel_days == 3
 
     def test_invalid_travel_days(self):
         with pytest.raises(ValidationError):
-            TripRequest(city="北京", start_date="2025-06-01", end_date="2025-06-03", travel_days=0, transportation="公交", accommodation="酒店")
+            TripRequest(
+                city="北京", start_date="2025-06-01", end_date="2025-06-03",
+                travel_days=0, transportation="公交", accommodation="酒店",
+            )
 
     def test_defaults(self):
-        r = TripRequest(city="上海", start_date="2025-07-01", end_date="2025-07-05", travel_days=5, transportation="地铁", accommodation="民宿")
+        r = TripRequest(
+            city="上海", start_date="2025-07-01", end_date="2025-07-05",
+            travel_days=5, transportation="地铁", accommodation="民宿",
+        )
         assert r.preferences == []
         assert r.traveler_count == 1
         assert r.traveler_type == "solo"

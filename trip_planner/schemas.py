@@ -1,4 +1,5 @@
 from typing import List, Optional, Union
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
@@ -17,7 +18,10 @@ class TripRequest(BaseModel):
     budget_min: Optional[int] = Field(default=None, description="最低预算(元)")
     budget_max: Optional[int] = Field(default=None, description="最高预算(元)")
     traveler_count: int = Field(default=1, description="出行人数", ge=1, le=50)
-    traveler_type: str = Field(default="solo", description="出行类型: solo/couple/family_kids/family_pets/friends/business")
+    traveler_type: str = Field(
+        default="solo",
+        description="出行类型: solo/couple/family_kids/family_pets/friends/business",
+    )
     pace: str = Field(default="moderate", description="行程节奏: relaxed/moderate/intensive")
     cuisine_preferences: List[str] = Field(default=[], description="饮食偏好", example=["川菜", "海鲜"])
 

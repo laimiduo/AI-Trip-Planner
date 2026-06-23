@@ -1,15 +1,16 @@
 """Pytest fixtures — 测试配置."""
 
-import sys
 import os
+import sys
+
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(__file__)), "trip_planner"))
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from trip_planner.main import app
 from trip_planner.cache import NullCache
+from trip_planner.main import app
 
 
 @pytest.fixture(scope="function")
