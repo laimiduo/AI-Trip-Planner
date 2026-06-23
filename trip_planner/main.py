@@ -1,21 +1,52 @@
-import asyncio
-import json
+"""FastAPI 应用入口 — 生命周期 + 路由注册."""
+
 import os
 import sys
 
-# 确保能导入同目录下的模块 (schemas, trip_planner_agent, amap_client 等)
-sys.path.insert(0, os.path.dirname(__file__))
+# 确保能以 trip_planner.xxx 形式导入自身模块
+_pkg_dir = os.path.dirname(__file__)
+_parent_dir = os.path.dirname(_pkg_dir)
+if _parent_dir not in sys.path:
+    sys.path.insert(0, _parent_dir)
 
 import uvicorn
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
-from sse_starlette.sse import EventSourceResponse
+from contextlib import asynccontextmanager
 
-from schemas import TripRequest, TripPlanResponse
-from trip_planner_agent import get_trip_planner_agent
+from trip_planner.cache import make_cache_backend, NullCache
+from trip_planner.config import get_settings
+from trip_planner.metrics import PrometheusMiddleware, metrics_endpoint
 
-app = FastAPI(title="AI旅行助手", version="2.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期: 初始化缓存 / 数据库 / Prometheus."""
+    settings = get_settings()
+
+    cache = make_cache_backend(settings.REDIS_URL, settings.ENABLE_CACHE)
+    app.state.cache = cache
+    print(f"  缓存后端: {'Redis' if not isinstance(cache, NullCache) else 'NullCache (降级)'}")
+
+    if settings.DATABASE_URL and settings.ENABLE_DB:
+        try:
+            from trip_planner.database import init_db, create_tables
+            await init_db(settings.DATABASE_URL)
+            await create_tables()
+            print("  数据库: 已连接")
+        except Exception as e:
+            print(f"  数据库连接失败 (跳过): {e}")
+    else:
+        print("  数据库: 未配置 (跳过)")
+
+    yield
+
+    from trip_planner.database import close_db
+    await close_db()
+
+
+app = FastAPI(title="AI旅行助手", version="2.1", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,55 +56,33 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-planner = get_trip_planner_agent()
+# --- Prometheus ---
+app.add_middleware(PrometheusMiddleware)
+app.add_route("/metrics", metrics_endpoint, include_in_schema=False)
+print("  Prometheus: /metrics 已注册")
 
-
-@app.post("/api/v1/trip/plan", response_model=TripPlanResponse)
-async def plan_trip(request: TripRequest):
-    """非流式接口（兼容旧调用方）."""
-    try:
-        await planner.initialize()
-        plan = await planner.plan_trip(request)
-        return TripPlanResponse(success=True, message="规划成功", data=plan)
-    except Exception as e:
-        return TripPlanResponse(success=False, message=str(e))
-
-
-@app.post("/api/v1/trip/plan/stream")
-async def plan_trip_stream(request: TripRequest):
-    """SSE 流式接口：分步推送进度，最后推送完整结果."""
-
-    async def event_generator():
-        try:
-            yield {"event": "progress", "data": json.dumps({"step": 1, "total": 4, "message": "正在查询天气信息..."})}
-            weather_task = planner._collect_weather(request)
-
-            yield {"event": "progress", "data": json.dumps({"step": 2, "total": 4, "message": "正在搜索景点..."})}
-            attraction_task = planner._collect_attractions(request)
-
-            yield {"event": "progress", "data": json.dumps({"step": 3, "total": 4, "message": "正在搜索酒店..."})}
-            hotel_task = planner._collect_hotels(request)
-
-            # 等待所有数据采集任务完成
-            weather_data, attraction_data, hotel_data = await asyncio.gather(
-                weather_task, attraction_task, hotel_task
-            )
-
-            yield {"event": "progress", "data": json.dumps({"step": 4, "total": 4, "message": "正在生成行程计划..."})}
-
-            plan = await planner._generate_plan(request, weather_data, attraction_data, hotel_data)
-
-            yield {"event": "result", "data": plan.model_dump_json()}
-
-        except Exception as e:
-            yield {"event": "error", "data": json.dumps({"message": str(e)})}
-
-    return EventSourceResponse(event_generator())
+# --- 路由 ---
+from routers.trip import router as trip_router
+from routers.feedback import router as feedback_router
+app.include_router(trip_router)
+app.include_router(feedback_router)
 
 
 @app.get("/")
 async def root():
     return FileResponse(os.path.join(os.path.dirname(__file__), "index.html"))
+
+
+@app.get("/health")
+async def health():
+    """健康检查."""
+    from trip_planner.database import is_db_ready
+    return {
+        "status": "ok",
+        "version": "2.1",
+        "cache": "enabled" if not isinstance(getattr(app.state, "cache", None), NullCache) else "disabled",
+        "database": "connected" if is_db_ready() else "disabled",
+    }
 
 
 if __name__ == "__main__":

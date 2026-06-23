@@ -3,10 +3,13 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import json
+from hashlib import md5
 from schemas import TripRequest, TripPlan
 from my_llm import llm
 from amap_client import AmapClient
 from prompts import PLANNER_SYSTEM_PROMPT
+from trip_planner.cache import NullCache, make_cache_backend, cache_key
+from trip_planner.config import get_settings
 import asyncio
 
 
@@ -16,6 +19,7 @@ class MultiAgentTripPlanner:
     def __init__(self):
         self.llm = llm
         self.amap = AmapClient()
+        self.cache = make_cache_backend(get_settings().REDIS_URL, get_settings().ENABLE_CACHE)
 
     async def initialize(self):
         """无需 MCP 初始化，保留以兼容旧调用方."""
@@ -23,6 +27,15 @@ class MultiAgentTripPlanner:
 
     async def plan_trip(self, request: TripRequest) -> TripPlan:
         """多源数据采集 + 单次 LLM 调用生成计划."""
+
+        # 检查 LLM 缓存
+        cache_key_str = self._request_cache_key(request)
+        cached = await self.cache.get(cache_key_str)
+        if cached is not None:
+            print("✅ LLM 缓存命中，直接返回")
+            data = json.loads(cached)
+            return TripPlan(**self._fill_defaults(data, request))
+
         print(f"\n{'='*60}")
         print(f"🚀 开始规划旅行...")
         print(f"目的地: {request.city} | {request.start_date} ~ {request.end_date} ({request.travel_days}天)")
@@ -42,8 +55,21 @@ class MultiAgentTripPlanner:
         # 单次 LLM 调用生成计划
         print("📋 正在生成行程计划...")
         plan = await self._generate_plan(request, weather_data, attraction_data, hotel_data)
+
+        # 写入缓存 (1h TTL)
+        try:
+            plan_json = plan.model_dump_json() if hasattr(plan, "model_dump_json") else json.dumps(plan)
+            await self.cache.set(cache_key_str, plan_json, 3600)
+        except Exception:
+            pass
+
         print(f"✅ 旅行计划生成完成!\n")
         return plan
+
+    def _request_cache_key(self, request: TripRequest) -> str:
+        """基于请求内容生成缓存键."""
+        raw = json.dumps(request.model_dump() if hasattr(request, "model_dump") else request.__dict__, sort_keys=True)
+        return cache_key("llm:plan", md5(raw.encode()).hexdigest())
 
     async def _collect_weather(self, request: TripRequest) -> list[dict]:
         """从高德直接获取天气预报."""
@@ -54,12 +80,26 @@ class MultiAgentTripPlanner:
             print(f"  天气查询失败: {e}")
             return []
 
+    @staticmethod
+    def _trim_poi(pois: list[dict], max_count: int = 6) -> list[dict]:
+        """只保留 POI 的核心字段，减少传给 LLM 的 token 量."""
+        kept = []
+        for p in pois[:max_count]:
+            kept.append({
+                "name": p.get("name", ""),
+                "address": p.get("address", ""),
+                "type": p.get("type", ""),
+                "location": p.get("location", ""),
+                "rating": p.get("biz_ext", {}).get("rating", "") if isinstance(p.get("biz_ext"), dict) else "",
+            })
+        return kept
+
     async def _collect_attractions(self, request: TripRequest) -> list[dict]:
         """从高德 POI 搜索获取景点."""
         try:
             keywords = ", ".join(request.preferences) if request.preferences else "旅游景点"
             pois = await self.amap.search_poi(keywords, request.city, types="旅游景点")
-            return pois[:15]  # 取前15个
+            return self._trim_poi(pois, 6)
         except Exception as e:
             print(f"  景点搜索失败: {e}")
             return []
@@ -68,7 +108,7 @@ class MultiAgentTripPlanner:
         """从高德 POI 搜索获取酒店."""
         try:
             pois = await self.amap.search_poi(f"{request.accommodation} 酒店", request.city, types="住宿服务")
-            return pois[:10]  # 取前10个
+            return self._trim_poi(pois, 4)
         except Exception as e:
             print(f"  酒店搜索失败: {e}")
             return []
@@ -119,30 +159,18 @@ class MultiAgentTripPlanner:
         attraction_data: list[dict],
         hotel_data: list[dict],
     ) -> TripPlan:
-        """单次 LLM 调用：文本生成 + JSON 提取 + 默认值填充."""
+        """单次 LLM 调用 (文本生成) → JSON 提取 → 默认值填充.
+
+        DeepSeek-V4-Flash 不支持 with_structured_output, 直接走文本+解析路径.
+        """
         user_message = self._build_user_message(request, weather_data, attraction_data, hotel_data)
 
-        try:
-            # 首选使用 with_structured_output
-            structured_llm = self.llm.with_structured_output(TripPlan)
-            plan = await structured_llm.ainvoke([
-                ("system", PLANNER_SYSTEM_PROMPT),
-                ("user", user_message),
-            ])
-            # LangChain 的 with_structured_output 可能返回 dict 或 Pydantic 对象
-            if isinstance(plan, TripPlan):
-                return plan
-            if isinstance(plan, dict):
-                return TripPlan(**self._fill_defaults(plan, request))
-            return plan
-        except Exception as e:
-            print(f"  结构化输出方式失败 ({e}), 回退到文本解析方式...")
-            text = await self.llm.ainvoke([
-                ("system", PLANNER_SYSTEM_PROMPT + "\n请直接输出 JSON，不要附加任何解释文字。"),
-                ("user", user_message),
-            ])
-            text = text.content if hasattr(text, "content") else str(text)
-            return self._parse_json_to_trip_plan(text, request)
+        text = await self.llm.ainvoke([
+            ("system", PLANNER_SYSTEM_PROMPT + "\n请直接输出 JSON，不要附加任何解释文字。"),
+            ("user", user_message),
+        ])
+        text = text.content if hasattr(text, "content") else str(text)
+        return self._parse_json_to_trip_plan(text, request)
 
     def _fill_defaults(self, data: dict, request: TripRequest) -> dict:
         """补充缺失的必需字段."""
@@ -150,9 +178,15 @@ class MultiAgentTripPlanner:
         data.setdefault("start_date", request.start_date)
         data.setdefault("end_date", request.end_date)
         data.setdefault("overall_suggestions", f"祝您在{request.city}旅途愉快！")
+        # 处理 null 值
+        if data.get("budget") is None:
+            data["budget"] = {}
+        if data.get("weather_info") is None:
+            data["weather_info"] = []
+        if data.get("days") is None:
+            data["days"] = []
         data.setdefault("weather_info", [])
         data.setdefault("days", [])
-        # 处理 days 数组 — 跳过非 dict 项（如纯字符串）
         valid_days = []
         for i, day in enumerate(data.get("days", [])):
             if not isinstance(day, dict):
@@ -167,7 +201,6 @@ class MultiAgentTripPlanner:
             day.setdefault("traffic_tips", [])
             day.setdefault("packing_suggestions", [])
             day.setdefault("local_events", [])
-            # 处理 attractions
             for a in day.get("attractions", []):
                 if not isinstance(a, dict):
                     continue
@@ -177,11 +210,9 @@ class MultiAgentTripPlanner:
                 a.setdefault("ticket_price", 0)
                 if "location" not in a or not a["location"]:
                     a["location"] = {"longitude": 0, "latitude": 0}
-            # 处理 meals — 映射 LLM 可能使用的替代键名
             for m in day.get("meals", []):
                 if not isinstance(m, dict):
                     continue
-                # 映射替代键: recommend → name, time → type
                 if "name" not in m or not m["name"]:
                     m["name"] = m.get("recommend", m.get("restaurant", m.get("type", "用餐")))
                 if "type" not in m or not m["type"]:
@@ -196,7 +227,6 @@ class MultiAgentTripPlanner:
                         m["type"] = "meal"
                 m.setdefault("description", "")
                 m.setdefault("estimated_cost", 0)
-            # 处理 hotel
             hotel = day.get("hotel")
             if hotel and isinstance(hotel, dict):
                 hotel.setdefault("estimated_cost", 0)
@@ -204,17 +234,18 @@ class MultiAgentTripPlanner:
                     hotel["location"] = {"longitude": 0, "latitude": 0}
             valid_days.append(day)
         data["days"] = valid_days
+        # 自动计算人均预算
+        if data.get("budget_per_person") is None and isinstance(data.get("budget"), dict) and data["budget"].get("total") and request.traveler_count:
+            data["budget_per_person"] = data["budget"]["total"] // request.traveler_count
         return data
 
     def _parse_json_to_trip_plan(self, text: str, request: TripRequest) -> TripPlan:
         """从 LLM 输出文本中提取 JSON 并转换为 TripPlan."""
         import re
-        # 尝试提取 json 代码块
         json_match = re.search(r'```(?:json)?\s*(\{.*?\})\s*```', text, re.DOTALL)
         if json_match:
             data = json.loads(json_match.group(1))
         else:
-            # 尝试找最大的 {} 块
             start = text.find('{')
             end = text.rfind('}')
             if start == -1 or end == -1:

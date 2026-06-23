@@ -165,7 +165,18 @@ class DayPlan(BaseModel):
     @classmethod
     def coerce_transportation(cls, v):
         if isinstance(v, dict):
-            return "; ".join(f"{k}: {val}" for k, val in v.items())
+            desc = v.get("description", "")
+            mode = v.get("mode", "")
+            cost = v.get("estimated_cost")
+            parts = []
+            if mode:
+                parts.append(mode)
+            if desc:
+                parts.append(desc)
+            result = "；".join(parts)
+            if cost:
+                result += f"（预估¥{cost}）"
+            return result
         return str(v) if v is not None else ""
 
     @field_validator("meals", mode="before")
@@ -174,7 +185,15 @@ class DayPlan(BaseModel):
         if isinstance(v, dict):
             return list(v.values())
         if isinstance(v, list):
-            return [m if isinstance(m, dict) else {} for m in v]
+            result = []
+            for m in v:
+                if isinstance(m, str):
+                    result.append({"name": m})
+                elif isinstance(m, dict):
+                    result.append(m)
+                else:
+                    result.append({})
+            return result
         return v or []
 
     @field_validator("attractions", mode="before")

@@ -160,10 +160,6 @@
             <p class="text-sm text-gray-600">旅行日期</p>
             <p class="text-lg font-bold" id="plan-dates"></p>
           </div>
-          <div class="bg-green-50 rounded-lg p-4">
-            <p class="text-sm text-gray-600">总体建议</p>
-            <p class="text-base font-semibold truncate" id="plan-suggestions" title=""></p>
-          </div>
           <div class="bg-yellow-50 rounded-lg p-4">
             <p class="text-sm text-gray-600">预估总预算</p>
             <p class="text-2xl font-bold text-yellow-600" id="plan-budget"></p>
@@ -174,14 +170,23 @@
           </div>
         </div>
 
+        <!-- 总体建议（独立一行） -->
+        <div id="suggestions-row" class="hidden mb-8 bg-gradient-to-r from-green-50 to-emerald-50 rounded-lg p-5 border-l-4 border-green-400">
+          <p class="text-sm text-gray-500 mb-1">💡 总体建议</p>
+          <p class="text-base text-gray-800 leading-relaxed whitespace-pre-line" id="plan-suggestions"></p>
+        </div>
+
+        <!-- 最佳出行时间（有数据才显示） -->
+        <div id="best-time-tips" class="hidden mb-8 bg-indigo-50 rounded-lg p-4 border-l-4 border-indigo-400">
+          <p class="font-medium text-indigo-800">📅 最佳出行时间</p>
+          <p class="text-sm mt-1 text-indigo-700" id="plan-best-time"></p>
+        </div>
+
         <!-- 预算明细 -->
         <div id="budget-breakdown" class="hidden mb-8 bg-gray-50 rounded-lg p-6">
           <h3 class="text-lg font-bold mb-3">预算明细</h3>
           <div class="grid grid-cols-2 md:grid-cols-5 gap-3 text-sm" id="budget-items"></div>
         </div>
-
-        <!-- 最佳出行时间建议 -->
-        <div id="best-time-tips" class="hidden mb-8 bg-indigo-50 rounded-lg p-4 border-l-4 border-indigo-400"></div>
 
         <!-- 天气信息 -->
         <div class="mb-8">
@@ -319,7 +324,7 @@
       free_text_input: formData.get('free_text_input') || '',
       traveler_count: parseInt(formData.get('traveler_count')) || 1,
       traveler_type: formData.get('traveler_type') || 'solo',
-      pace: formData.querySelector('input[name="pace"]:checked')?.value || 'moderate',
+      pace: document.querySelector('input[name="pace"]:checked')?.value || 'moderate',
       cuisine_preferences: cuisine,
       budget_min: budgetMin ? parseInt(budgetMin) : null,
       budget_max: budgetMax ? parseInt(budgetMax) : null
@@ -332,10 +337,28 @@
   function renderPlan(plan) {
     document.getElementById('plan-title').textContent = `${plan.city} ${plan.days.length}天旅行计划`;
     document.getElementById('plan-dates').textContent = `${plan.start_date} ~ ${plan.end_date}`;
-    document.getElementById('plan-suggestions').textContent = plan.overall_suggestions || '无';
-    document.getElementById('plan-suggestions').title = plan.overall_suggestions || '';
+
+    // 总体建议（独立一行）
+    const suggestionsRow = document.getElementById('suggestions-row');
+    const suggestionsEl = document.getElementById('plan-suggestions');
+    if (plan.overall_suggestions) {
+      suggestionsEl.textContent = plan.overall_suggestions;
+      suggestionsRow.classList.remove('hidden');
+    } else {
+      suggestionsRow.classList.add('hidden');
+    }
+
     document.getElementById('plan-budget').textContent = plan.budget ? `¥${plan.budget.total}` : '未提供';
     document.getElementById('plan-budget-per-person').textContent = plan.budget_per_person ? `¥${plan.budget_per_person}` : '未提供';
+
+    // 最佳出行时间（有数据才显示）
+    const bestTimeTips = document.getElementById('best-time-tips');
+    if (plan.best_time_tips) {
+      document.getElementById('plan-best-time').textContent = plan.best_time_tips;
+      bestTimeTips.classList.remove('hidden');
+    } else {
+      bestTimeTips.classList.add('hidden');
+    }
 
     // 预算明细
     if (plan.budget) {
@@ -356,15 +379,6 @@
       `).join('');
     } else {
       document.getElementById('budget-breakdown').classList.add('hidden');
-    }
-
-    // 最佳出行时间建议
-    const tipsEl = document.getElementById('best-time-tips');
-    if (plan.best_time_tips) {
-      tipsEl.classList.remove('hidden');
-      tipsEl.innerHTML = `<p class="font-medium">💡 最佳出行提示</p><p class="text-sm mt-1">${plan.best_time_tips}</p>`;
-    } else {
-      tipsEl.classList.add('hidden');
     }
 
     // 天气

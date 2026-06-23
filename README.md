@@ -1,211 +1,145 @@
-# 🧳 AI 旅行助手（AI Trip Planner）
+# 🧳 AI Trip Planner
 
-**这是一个入门级的agent项目，非常适合新手来了解agent和mcp的原理及应用，并且代码非常简洁，对于刚入门的新手很友好**
-> 基于 LangChain1.1 + FastAPI + 高德地图 MCP Server 的多智能体行程规划系统  
-> 输入目的地 + 日期，30 秒生成「可落地」的详细旅行计划（景点/酒店/天气/预算）
+**Production-grade travel planning system** — DeepSeek-V4-Flash + Amap REST API + FastAPI + Redis/PostgreSQL.
 
-<img width="1504" height="1170" alt="image" src="https://github.com/user-attachments/assets/40b3bd94-c354-4fbb-9bbd-a5a0396e9ec7" />
+> 输入目的地 + 日期, ~47s 生成「可落地」的详细旅行计划 (景点/酒店/天气/预算)
 
 ---
 
-## 🌟 功能亮点
-| 维度 | 说明 |
-|---|---|
-| ✅ 多智能体 | 景点搜索 / 天气查询 / 酒店推荐 / 行程规划 四 Agent 并行，互不串台 |
-| ✅ 真实数据 | 100% 调用高德地图官方 API，拒绝幻觉 |
-| ✅ 高颜值输出 | 每日 2-3 景点 + 三餐 + 酒店 + 门票/餐饮/住宿预算，支持折叠 |
-| ✅ 实时天气 | 出发当天自动拉取 7 日预报，穿衣建议同步给出 |
-| ✅ 自定义偏好 | 「多博物馆」「避开人流」「亲子友好」等自然语言直接提需求 |
+## Architecture
 
----
-
-## 🏗️ 系统架构
-```mermaid
-graph TD
-    A[用户输入] --> B[FastAPI]
-    B --> C{多 Agent 调度}
-    C --> D[景点 Agent]
-    C --> E[天气 Agent]
-    C --> F[酒店 Agent]
-    C --> G[预算 Agent]
-    D & E & F & G --> H[LangChain DeepSeek]
-    H --> I[前端 Markdown/HTML]
+```
+Nginx (反向代理/限流)
+  └─ FastAPI (ASGI)
+       ├─ Redis Cache (Amap POI/Weather + LLM plan)
+       ├─ ARQ Worker (异步后台任务队列)
+       ├─ PostgreSQL (持久化旅行计划 + 反馈)
+       └─ Prometheus (指标采集)
 ```
 
----
+## Tech Stack
 
-## ⚡ 异步并行优化
+| 层 | 技术 | 用途 |
+|----|------|------|
+| AI | DeepSeek-V4-Flash (OpenAI-compatible) | 行程生成, 一次 LLM 调用 |
+| API | FastAPI + Pydantic v2 + SSE | REST + 流式进度推送 |
+| Cache | Redis + NullCache 降级 | Amap POI 缓存 24h / 天气 30min / LLM 1h |
+| Queue | ARQ (async-native) | 后台异步任务, PubSub 进度 |
+| DB | PostgreSQL 16 + SQLAlchemy 2.0 async | 旅行计划 + 反馈 |
+| Migration | Alembic | 数据库版本管理 |
+| Metrics | Prometheus | 请求量/延迟/错误率/缓存命中率 |
+| Proxy | Nginx | 限流 60r/m, SSE 反代, 内网隔离 |
+| CI | GitHub Actions | lint + test + build |
 
-### 优化前后对比
+## Quick Start
 
-| 模式 | 执行流程 | 耗时 |
-|:---:|:---|:---:|
-| **优化前（顺序）** | 景点 → 等待 → 天气 → 等待 → 酒店 → 等待 → 生成计划 | ~4分22秒 |
-| **优化后（并行）** | 景点+天气+酒店 并行 → 生成计划 | ~3分09秒 |
-
-**性能提升：约 28%**
-
-### 核心实现
-
-使用 `asyncio.gather()` 实现异步并行：
-
-```python
-# 并行执行三个独立任务
-attraction_text, weather_text, hotel_text = await asyncio.gather(
-    get_attractions(),   # 景点搜索
-    get_weather(),       # 天气查询
-    get_hotels()         # 酒店推荐
-)
-```
-
-### 优化原理
-
-1. **识别独立任务**：景点搜索、天气查询、酒店推荐三个任务互不依赖，可以同时执行
-2. **asyncio.gather**：并发启动多个协程，等待全部完成后返回结果
-
-### 代码位置
-
-- 核心逻辑：`trip_planner/trip_planner_agent.py` - `plan_trip()` 方法
-
----
-
-##🛠️ 技术栈
-- **后端**：FastAPI + Uvicorn + Pydantic v2
-- **AI 框架**：LangChain 1.1 + langchain-mcp-adapters
-- **LLM**：DeepSeek（通义千问/DeepSeek API 双兼容）
-- **地图服务**：高德地图 Web 服务 API（POI + 天气）
-- **前端**：Tailwind CDN + 原生 JS（零构建）
-- **并发**：asyncio.gather 并行查询多个独立 API
-
----
-
-## 📦 一键本地部署
 ```bash
 # 1. 环境
 conda create -n trip python=3.11 -y && conda activate trip
 
 # 2. 依赖
-pip install -r requirements.txt
+pip install -r requirements.txt -r requirements-dev.txt
 
-# 3. 密钥（复制后填真实 key）
+# 3. 密钥
 cp .env.example .env
+# 编辑 .env, 至少填写:
+#   DEEPSEEK_API_KEY=sk-xxx
+#   AMAP_API_KEY=xxx
 
-# 4. 启动
+# 4. 启动 (单服务模式, 无需 Redis/DB)
 uvicorn trip_planner.main:app --reload --host 0.0.0.0 --port 8000
 
 # 5. 访问
-# 前后端同容器同域 http://127.0.0.1:8000/
-# API 文档 http://127.0.0.1:8000/docs
+#   首页 http://127.0.0.1:8000/
+#   API  http://127.0.0.1:8000/docs
 ```
 
----
-
-## 🐳 Docker 一键启动
+## Docker Compose (全栈)
 
 ```bash
-# 1) 准备环境变量
 cp .env.example .env
-# 然后编辑 .env，至少填：AMAP_API_KEY、以及你实际使用的 LLM KEY/URL
+# 编辑 .env, 添加:
+#   REDIS_URL=redis://redis:6379
+#   DATABASE_URL=postgresql://trip:trip_pass@db:5432/trip_planner
 
-# 2) 启动
 docker compose up --build
-
-# 3) 访问
-# 首页（前后端同容器同域） http://127.0.0.1:8000/
-# API 文档            http://127.0.0.1:8000/docs
 ```
 
-## 📋 项目结构
+访问 `http://localhost/` (通过 Nginx 入口, 限流保护).
+
+## API Endpoints
+
+| Method | Path | 说明 |
+|--------|------|------|
+| POST | `/api/v1/trip/plan` | 同步生成 (默认) |
+| POST | `/api/v1/trip/plan/stream` | SSE 流式进度推送 |
+| POST | `/api/v1/trip/plan/async` | 异步提交 (需 Redis + Worker) |
+| GET | `/api/v1/trip/plan/async/{id}/status` | 查询异步任务状态 |
+| GET | `/api/v1/trip/plan/async/{id}/stream` | SSE 异步进度订阅 |
+| POST | `/api/v1/feedback` | 提交用户反馈 (需 DB) |
+| GET | `/api/v1/feedback` | 查看反馈列表 |
+| GET | `/health` | 健康检查 |
+| GET | `/metrics` | Prometheus 指标 |
+
+## Project Structure
+
 ```
-ai-trip-planner/
-├── trip_planner/           # 核心包
-│   ├── main.py            # FastAPI 入口
-│   ├── trip_planner_agent.py # 多 Agent 编排
-│   ├── schemas.py         # Pydantic 模型
-│   ├── prompts.py         # 系统提示词
-│   └── index.html         # 前端单页
-├── my_llm.py              # LLM 初始化
-├── env_utils.py           # 环境变量
-├── requirements.txt
-├── .env.example
-└── README.md
-```
-
----
-
-| 文件/目录 | 功能描述 |
-| :--- | :--- |
-| `trip_planner/` | 存放旅行规划核心逻辑和相关组件的目录。 |
-| `trip_planner/trip_planner_agent.py` | 实现了整个应用框架的多智能体核心逻辑。 |
-| `trip_planner/schemas.py` | 使用 Pydantic 定义所有输入、输出和内部数据的数据格式。 |
-| `trip_planner/prompts.py` | 集中管理和配置系统中各个 Agent 的系统提示词（System Prompts）。 |
-| `trip_planner/index.html` | 项目的前端页面文件。 |
-| `trip_planner/main.py` | 基于 FastAPI 框架构建的 API 主入口文件。 |
-| `my_llm.py` | 用于配置和初始化大型语言模型 (LLM) 访问参数。 |
-| `env_utils.py` | 环境变量加载工具，负责读取和处理项目配置。 |
-| `requirements.txt` | Python 项目所需的依赖库列表。 |
-| `.env` | 环境变量模板文件。**重要：** 使用前需要复制并根据实际环境填写配置。 |
-| `README.md` | 项目说明文档（当前文件）。 |
-
----
-
-## 快速开始
-
-- 创建并激活虚拟环境（推荐）
-  conda create -n trip_planner python==3.11
-  conda activate trip_planner
-  
-- 安装依赖
-  pip install -r requirements.txt
-
-- 配置环境变量
-  在.env文件里配置自己的APIKey:
-    - 高德地图 Key 申请地址：https://lbs.amap.com/api/webservice/guide/api/key
-    - 通义千问 API：https://help.aliyun.com/zh/dashscope/
-
-- 启动后端（前端会同时在 8000 端口提供服务）
-  uvicorn trip_planner.main:app --reload --host 127.0.0.1 --port 8000
-
-- 访问前端
-  - API 文档 http://127.0.0.1:8000/docs
-
----
-
-## 🔑 密钥申请 2 分钟
-| 平台 | 地址 | 免费额度 |
-|---|---|---|
-| 高德地图 | https://lbs.amap.com/dev/key | 每日 1 万次 |
-| 通义千问 | https://dashscope.console.aliyun.com | 100 万 token |
-
-拿到 key 后直接写 `.env`：
-```
-AMAP_KEY=你的高德key
-DEEPSEEK_KEY=你的deepseek-key
+├── trip_planner/
+│   ├── main.py               # FastAPI 入口 + lifespan
+│   ├── config.py             # pydantic-settings 配置
+│   ├── cache.py              # CacheBackend / RedisCache / NullCache
+│   ├── database.py           # SQLAlchemy async engine
+│   ├── models.py             # TravelPlan / Feedback ORM
+│   ├── metrics.py            # Prometheus 指标 + 中间件
+│   ├── background.py         # ARQ 后台任务
+│   ├── worker.py             # ARQ worker 入口
+│   ├── dependencies.py       # FastAPI Depends 工厂
+│   ├── schemas.py            # Pydantic 模型
+│   ├── prompts.py            # 系统提示词
+│   ├── trip_planner_agent.py # 多源采集 + LLM 生成
+│   ├── amap_client.py        # 高德 REST 客户端 (缓存)
+│   ├── routers/
+│   │   ├── trip.py           # 旅行计划路由
+│   │   └── feedback.py       # 用户反馈路由
+│   └── index.html            # 前端单页
+├── tests/
+│   ├── test_schemas.py       # Schema 验证
+│   ├── test_cache.py         # 缓存后端
+│   └── test_api.py           # API 端点
+├── alembic/                  # 数据库迁移
+├── nginx/
+│   ├── nginx.conf            # 反向代理 + 限流
+│   └── Dockerfile
+├── prometheus/
+│   └── prometheus.yml
+├── .github/workflows/ci.yml
+├── docker-compose.yml        # 6 服务编排
+├── Dockerfile                # 多阶段构建
+└── requirements.txt
 ```
 
----
+## Cache Strategy
 
-## 🧪 示例请求
-```bash
-curl -X POST http://localhost:8000/plan \
-  -H "Content-Type: application/json" \
-  -d '{
-        "destination": "成都",
-        "days": 3,
-        "transport": "高铁",
-        "hotel_level": "舒适型",
-        "extra": "多安排火锅和熊猫基地"
-      }'
-```
-返回 JSON 格式的完整行程规划结果
+| 数据 | TTL | Key 模式 |
+|------|-----|----------|
+| 天气 | 30min | `amap:weather:{city}` |
+| POI | 24h | `amap:poi:{md5}` |
+| 地理编码 | 7天 | `amap:geocode:{md5}` |
+| 驾车路线 | 1h | `amap:driving:{origin}:{dest}` |
+| LLM 计划 | 1h | `llm:plan:{md5}` |
 
----
+Redis 不可用时自动降级为 NullCache, 功能完全不变.
 
-## 🙏 致谢
-- 高德地图 MCP Server 提供稳定工具集  
-- DeepSeek 开源模型降低幻觉率  
-- LangChain 官方文档 & 社区
+## Performance
 
----
+- **首次请求**: ~47s (Amap 数据采集 + 1 次 LLM 调用)
+- **缓存命中**: ~5s (直接从 Redis 返回)
+- **LLM 调用**: 从 ~7 次降至 1 次
 
-如果帮到你，给个 Star 支持一下吧 🚀 
+## Key Design Decisions
+
+1. **NullCache + 可选 DB**: 所有新组件可选, 零配置 standalone 模式
+2. **直连 Amap REST**: 去掉 MCP/SSE 中间层, 减少延迟和失败点
+3. **ARQ 优于 Celery**: async-native, 基于 Redis, 无需额外 broker
+4. **反范式化 Schema**: travel_plans 表存完整输入 + 输出, 避免 join
+5. **Prometheus 指标先行**: 后续开发基于数据做决策

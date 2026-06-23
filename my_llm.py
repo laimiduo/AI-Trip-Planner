@@ -5,5 +5,7 @@ llm = ChatOpenAI(
     model='deepseek-v4-flash',
     temperature=0.5,
     api_key=DEEPSEEK_API_KEY,
-    base_url=DEEPSEEK_API_URL
+    base_url=DEEPSEEK_API_URL,
+    timeout=120,
+    max_retries=0,
 )
