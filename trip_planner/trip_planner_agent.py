@@ -242,11 +242,32 @@ class MultiAgentTripPlanner:
                     hotel["location"] = {"longitude": 0, "latitude": 0}
             valid_days.append(day)
         data["days"] = valid_days
+        # 自动重算预算: 累加每天每项的实际花费
+        total_attractions = 0
+        total_hotels = 0
+        total_meals = 0
+        total_transportation = 0
+        for day in valid_days:
+            for a in day.get("attractions", []):
+                if isinstance(a, dict):
+                    total_attractions += a.get("ticket_price", 0) or 0
+            hotel = day.get("hotel")
+            if isinstance(hotel, dict):
+                total_hotels += hotel.get("estimated_cost", 0) or 0
+            for m in day.get("meals", []):
+                if isinstance(m, dict):
+                    total_meals += m.get("estimated_cost", 0) or 0
+        total = total_attractions + total_hotels + total_meals + total_transportation
+        data["budget"] = {
+            "total_attractions": total_attractions,
+            "total_hotels": total_hotels,
+            "total_meals": total_meals,
+            "total_transportation": total_transportation,
+            "total": total,
+        }
         # 自动计算人均预算
-        bp = data.get("budget_per_person")
-        bd = data.get("budget")
-        if bp is None and isinstance(bd, dict) and bd.get("total") and request.traveler_count:
-            data["budget_per_person"] = bd["total"] // request.traveler_count
+        if request.traveler_count:
+            data["budget_per_person"] = total // request.traveler_count
         return data
 
     def _parse_json_to_trip_plan(self, text: str, request: TripRequest) -> TripPlan:
