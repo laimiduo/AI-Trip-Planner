@@ -203,6 +203,7 @@ class MultiAgentTripPlanner:
             day.setdefault("date", "")
             day.setdefault("description", f"第{i+1}天")
             day.setdefault("transportation", request.transportation)
+            day.setdefault("transportation_cost", 0)
             day.setdefault("accommodation", request.accommodation)
             day.setdefault("meals", [])
             day.setdefault("attractions", [])
@@ -257,6 +258,7 @@ class MultiAgentTripPlanner:
             for m in day.get("meals", []):
                 if isinstance(m, dict):
                     total_meals += m.get("estimated_cost", 0) or 0
+            total_transportation += day.get("transportation_cost", 0) or 0
         total = total_attractions + total_hotels + total_meals + total_transportation
         data["budget"] = {
             "total_attractions": total_attractions,

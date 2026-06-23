@@ -156,6 +156,7 @@ class DayPlan(BaseModel):
     day_index: int = Field(default=0, description="第几天(从0开始)")
     description: str = Field(default="", description="当日行程概述")
     transportation: str = Field(default="", description="交通方式")
+    transportation_cost: int = Field(default=0, description="当日交通费用(元)")
     accommodation: str = Field(default="", description="住宿类型")
     hotel: Optional[Union[Hotel, dict, str, None]] = Field(default=None, description="推荐酒店")
     meals: List[Union[Meal, dict]] = Field(default=[], description="餐饮列表")
