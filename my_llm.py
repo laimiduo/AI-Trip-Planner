@@ -8,5 +8,4 @@ llm = ChatOpenAI(
     base_url=DEEPSEEK_API_URL,
     timeout=120,
     max_retries=0,
-    max_tokens=2048,
 )
